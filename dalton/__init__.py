@@ -115,12 +115,13 @@ class Recorder(object):
     recorder is active (has been started).
 
     """
-    def __init__(self, caller=None, use_global=False):
+    def __init__(self, caller=None, use_global=False, except_hosts=()):
         """Create a record for the given caller"""
         self._caller = caller
         self._global = use_global
         self._interaction = []
         self._current_step = None
+        self._except_hosts = except_hosts
 
     def start(self):
         """Called to begin/resume a recording of an interaction"""
@@ -200,6 +201,11 @@ class Recorder(object):
             f.write('\n'.join(module_str))
         return True
 
+    def should_intercept(self, connection, method, url, body, headers):
+        netloc = '{}:{}'.format(connection.host, connection.port)
+        if netloc in self._except_hosts:
+            return False
+        return True
 
 class Player(object):
     """HTTP Interaction Player
@@ -207,7 +213,8 @@ class Player(object):
     Plays back an interaction from a dalton recording.
 
     """
-    def __init__(self, playback_dir, caller=None, use_global=False):
+    def __init__(self, playback_dir, caller=None, use_global=False,
+                 except_hosts=()):
         """Create a player from the playback_dir"""
         mod_name = playback_dir.split(os.path.sep)[-1]
         container_dir = playback_dir.split(os.path.sep)[:-1]
@@ -217,6 +224,7 @@ class Player(object):
         self._module = __import__(mod_name)
         self._current_step = getattr(self._module, 'StepNumber0', None)
         self._current_request = None
+        self._except_hosts = except_hosts
 
     def play(self):
         callers = _registered_injections.callers
@@ -270,6 +278,11 @@ class Player(object):
             self._current_step = getattr(self._module, next_step)
         return response
 
+    def should_intercept(self, connection, method, url, body, headers):
+        netloc = '{}:{}'.format(connection.host, connection.port)
+        if netloc in self._except_hosts:
+            return False
+        return True
 
 ## Used by generated Python modules
 
@@ -326,11 +339,13 @@ def _request(self, method, url, body=None, headers=None):
     """Monkey-patched replacement request method"""
     headers = headers or {}
     intercept = self._intercept()
-    if 'recorder' in intercept:
+    if 'recorder' in intercept and\
+       intercept['recorder'].should_intercept(self, method, url, body, headers):
         intercept['recorder']._record_request(self.host, method, url, 
                                               body, headers)
     
-    if intercept['mode'] == 'normal':
+    if intercept['mode'] == 'normal' or\
+       not intercept['playback'].should_intercept(self, method, url, body, headers):
         return self._orig_request(method, url, body, headers)
     else:
         return intercept['playback'].request(method, url, body, headers)
@@ -339,9 +354,17 @@ def _request(self, method, url, body=None, headers=None):
 def _getresponse(self):
     """Monkey-patched replacement getresponse method"""
     intercept = self._intercept()
-    if intercept['mode'] == 'normal':
+    if intercept.get('playback'):
+        req = intercept['playback']._current_request
+    elif intercept.get('recorder'):
+        req = intercept['recorder']._current_step
+    if intercept['mode'] == 'normal' or\
+       not intercept['playback'].should_intercept(self, req.method, req.url,
+                                                  req.body, req.headers):
         response = self._orig_getresponse()
-        if 'recorder' in intercept:
+        if 'recorder' in intercept and\
+           intercept['recorder'].should_intercept(self, req.method, req.url,
+                                                  req.body, req.headers):
             intercept['recorder']._record_response(response)
             
             # Ensure chunked is not set, since the StringIO replacement
