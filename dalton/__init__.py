@@ -363,8 +363,11 @@ def _getresponse(self):
                                                   req.body, req.headers):
         response = self._orig_getresponse()
         if 'recorder' in intercept and\
-           intercept['recorder'].should_intercept(self, req.method, req.url,
-                                                  req.body, req.headers):
+           intercept['recorder'].should_intercept(self,
+                                                  req.request_method,
+                                                  req.request_url,
+                                                  req.request_body,
+                                                  req.request_headers):
             intercept['recorder']._record_response(response)
             
             # Ensure chunked is not set, since the StringIO replacement
