@@ -72,7 +72,8 @@ class InteractionStep(object):
         pprint.pprint(obj, indent=21, stream=out)
         out.seek(0)
         content = out.read()
-        content = content[:1] + content[21:]
+        if '\n' in content.strip():
+            content = content[:1] + content[21:]
         return content.strip()
     
     def serialize(self, step_number, next_step, output_dir):
